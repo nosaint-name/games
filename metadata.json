@@ -1,0 +1,6 @@
+{
+  "name": "After Midnight",
+  "description": "An atmospheric branching romance visual novel set in the moonlit woods with Damian.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
