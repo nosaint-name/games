@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { SCENE_ASSETS } from '../game/storyData';
 import { soundEngine } from '../game/audio';
 
@@ -40,7 +40,7 @@ export function IntroSequence({ onComplete }: IntroSequenceProps) {
   const beat = INTRO_BEATS[beatIndex];
   const isLast = beatIndex >= INTRO_BEATS.length - 1;
 
-  const handleAdvance = () => {
+  const handleAdvance = useCallback(() => {
     soundEngine.startMusic();
     if (isLast) {
       soundEngine.playStartChime();
@@ -49,7 +49,7 @@ export function IntroSequence({ onComplete }: IntroSequenceProps) {
       soundEngine.playIntroBeat();
       setBeatIndex((i) => i + 1);
     }
-  };
+  }, [isLast, onComplete]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -64,7 +64,7 @@ export function IntroSequence({ onComplete }: IntroSequenceProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  });
+  }, [handleAdvance, onComplete]);
 
   return (
     <main

@@ -1,20 +1,31 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { EndingSnapshot, HistoryEntry } from '../game/engine';
 import {
   ALL_ENDINGS,
   DISPLAY_GALLERY,
   DisplayArtwork,
   EndingId,
+  GAME_CREDITS,
 } from '../game/storyData';
+import { SIDE_QUESTS } from '../game/quests';
+import { CreditsModal } from './CreditsModal';
 
 interface PauseModalProps {
+  unlockedAchievementsCount: number;
+  totalAchievementsCount: number;
   onResume: () => void;
+  onOpenSaveSlots: () => void;
+  onOpenAchievements: () => void;
   onRestart: () => void;
   onReturnToTitle: () => void;
 }
 
 export function PauseModal({
+  unlockedAchievementsCount,
+  totalAchievementsCount,
   onResume,
+  onOpenSaveSlots,
+  onOpenAchievements,
   onRestart,
   onReturnToTitle,
 }: PauseModalProps) {
@@ -46,6 +57,30 @@ export function PauseModal({
             className="min-h-[44px] w-full cursor-pointer rounded-md bg-[#E09F5A] px-5 py-2.5 text-sm font-semibold text-[#0B1215] transition-colors duration-150 hover:bg-[#EBB06E] focus-visible:outline-2 focus-visible:outline-[#F2ECE1]"
           >
             Resume
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenSaveSlots();
+            }}
+            className="min-h-[44px] w-full cursor-pointer rounded-md border border-[#94A39E]/35 bg-[#132025] px-5 py-2.5 text-sm font-medium text-[#F2ECE1] transition-colors duration-150 hover:border-[#E09F5A]/70 focus-visible:outline-2 focus-visible:outline-[#E09F5A]"
+          >
+            Save / Load Slots
+          </button>
+          <button
+            type="button"
+            data-testid="pause-achievements-button"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenAchievements();
+            }}
+            className="flex min-h-[44px] w-full cursor-pointer items-center justify-between rounded-md border border-[#94A39E]/35 bg-[#132025] px-5 py-2.5 text-sm font-medium text-[#F2ECE1] transition-colors duration-150 hover:border-[#E09F5A]/70 focus-visible:outline-2 focus-visible:outline-[#E09F5A]"
+          >
+            <span>Achievements</span>
+            <span className="font-mono-num text-xs font-semibold text-[#E09F5A]">
+              {unlockedAchievementsCount}/{totalAchievementsCount}
+            </span>
           </button>
           <button
             type="button"
@@ -119,26 +154,33 @@ export function HistoryModal({ history, onClose }: HistoryModalProps) {
                     <span>
                       {entry.speaker} · {entry.chapter}
                     </span>
-                    <span
-                      className={`font-mono-num font-medium ${
-                        entry.pointsDelta > 0
-                          ? 'text-[#E09F5A]'
-                          : entry.pointsDelta < 0
-                            ? 'text-[#9CB3BA]'
-                            : 'text-[#94A39E]'
-                      }`}
-                    >
-                      {entry.pointsDelta > 0
-                        ? `+${entry.pointsDelta}`
-                        : entry.pointsDelta}
-                    </span>
+                    {entry.choiceLabel && (
+                      <span
+                        className={`font-mono-num font-medium ${
+                          entry.pointsDelta > 0
+                            ? 'text-[#E09F5A]'
+                            : entry.pointsDelta < 0
+                              ? 'text-[#9CB3BA]'
+                              : 'text-[#94A39E]'
+                        }`}
+                      >
+                        {entry.pointsDelta > 0
+                          ? `+${entry.pointsDelta}`
+                          : entry.pointsDelta}
+                      </span>
+                    )}
                   </div>
                   <p className="font-display text-lg text-[#E6E0D4]">
                     “{entry.text}”
                   </p>
-                  <p className="mt-1.5 text-sm text-[#A6B5B0]">
-                    You chose: <span className="text-[#F2ECE1]">{entry.choiceLabel}</span>
-                  </p>
+                  {entry.choiceLabel && (
+                    <p className="mt-1.5 text-sm text-[#A6B5B0]">
+                      {entry.kind === 'quest' ? 'Completed:' : 'You chose:'}{' '}
+                      <span className="text-[#F2ECE1]">
+                        {entry.choiceLabel}
+                      </span>
+                    </p>
+                  )}
                 </li>
               ))}
             </ol>
@@ -161,6 +203,19 @@ export function EndingsGalleryModal({
   const [activeTab, setActiveTab] = useState<'gallery' | 'endings'>('gallery');
   const [selectedArt, setSelectedArt] = useState<DisplayArtwork | null>(null);
   const [failedIds, setFailedIds] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!selectedArt) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedArt(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [selectedArt]);
 
   return (
     <div
@@ -344,6 +399,8 @@ export function EndingModal({
   onPlayAgain,
   onReturnToTitle,
 }: EndingModalProps) {
+  const [showCredits, setShowCredits] = useState(false);
+
   const scoreFormatted =
     snapshot.finalScore > 0
       ? `+${snapshot.finalScore}`
@@ -356,9 +413,9 @@ export function EndingModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="ending-title"
-      className="fixed inset-0 z-40 flex items-center justify-center bg-[#070B0D]/80 px-4"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-[#070B0D]/80 px-4 py-6"
     >
-      <div className="w-full max-w-lg rounded-md border border-[#94A39E]/30 bg-[#0E171B] p-7 shadow-2xl sm:p-8">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-md border border-[#94A39E]/30 bg-[#0E171B] p-7 shadow-2xl sm:p-8">
         <div className="text-xs font-medium tracking-wider text-[#E09F5A] uppercase">
           Ending Reached · {snapshot.tier}
         </div>
@@ -377,8 +434,8 @@ export function EndingModal({
           {snapshot.endingSummary}
         </p>
 
-        {/* 3 Tabular Stat Tiles */}
-        <div className="mt-6 grid grid-cols-3 gap-3 border-y border-[#94A39E]/20 py-4">
+        {/* 4 Tabular Stat Tiles */}
+        <div className="mt-5 grid grid-cols-2 gap-3 border-y border-[#94A39E]/20 py-4 sm:grid-cols-4">
           <div>
             <div className="text-[11px] text-[#94A39E] uppercase">Affinity</div>
             <div
@@ -400,7 +457,42 @@ export function EndingModal({
               {unlockedCount}/{totalEndings}
             </div>
           </div>
+          <div>
+            <div className="text-[11px] text-[#94A39E] uppercase">Quests</div>
+            <div
+              data-testid="ending-quests"
+              className="mt-0.5 font-mono-num text-2xl font-semibold text-[#F2ECE1]"
+            >
+              {snapshot.questsCompleted}/{SIDE_QUESTS.length}
+            </div>
+          </div>
         </div>
+
+        {/* Credits Summary Section at the End of the Game */}
+        <section
+          aria-label="Game credits"
+          data-testid="ending-credits"
+          className="mt-5 rounded-md border border-[#94A39E]/20 bg-[#121D22] px-4 py-3.5"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] font-semibold tracking-wider text-[#E09F5A] uppercase">
+              Credits
+            </span>
+            <span className="text-xs text-[#94A39E]">
+              After Midnight
+            </span>
+          </div>
+          <dl className="mt-2.5 grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2 sm:gap-x-4">
+            {GAME_CREDITS.slice(0, 4).map((credit) => (
+              <div key={credit.role} className="flex flex-col">
+                <dt className="text-[10px] tracking-wider text-[#94A39E] uppercase">
+                  {credit.role}
+                </dt>
+                <dd className="font-medium text-[#E6E0D4]">{credit.name}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
 
         <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
           <button
@@ -418,14 +510,32 @@ export function EndingModal({
             type="button"
             onClick={(e) => {
               e.currentTarget.blur();
-              onReturnToTitle();
+              setShowCredits(true);
             }}
             className="min-h-[44px] cursor-pointer rounded-md border border-[#94A39E]/35 bg-[#132025] px-5 py-2.5 text-sm font-medium text-[#F2ECE1] transition-colors duration-150 hover:border-[#E09F5A]/70 focus-visible:outline-2 focus-visible:outline-[#E09F5A]"
+          >
+            Full Credits
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onReturnToTitle();
+            }}
+            className="min-h-[44px] cursor-pointer rounded-md border border-[#94A39E]/25 bg-transparent px-5 py-2.5 text-sm font-medium text-[#CBD4D0] transition-colors duration-150 hover:border-[#94A39E]/55 hover:text-[#F2ECE1] focus-visible:outline-2 focus-visible:outline-[#E09F5A]"
           >
             Title Screen
           </button>
         </div>
       </div>
+
+      {showCredits && (
+        <CreditsModal
+          endingTitle={snapshot.endingTitle}
+          onClose={() => setShowCredits(false)}
+          onReturnToTitle={onReturnToTitle}
+        />
+      )}
     </div>
   );
 }

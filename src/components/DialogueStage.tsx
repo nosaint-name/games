@@ -2,41 +2,35 @@ import { useEffect, useState } from 'react';
 import {
   DialogueChoice,
   DialogueNode,
-  PORTRAIT_ASSETS,
-  SCENE_ASSETS,
 } from '../game/storyData';
 import { soundEngine } from '../game/audio';
+import { CharacterPortrait } from './CharacterPortrait';
+import { SceneBackdrop } from './SceneBackdrop';
 
 interface DialogueStageProps {
   node: DialogueNode;
   choices: DialogueChoice[];
   isPaused: boolean;
+  isSkipping?: boolean;
   hideDialogueBox?: boolean;
   onSelectChoice: (index: number) => void;
+  onAdvanceDialogue: () => void;
 }
 
 export function DialogueStage({
   node,
   choices,
   isPaused,
+  isSkipping = false,
   hideDialogueBox = false,
   onSelectChoice,
+  onAdvanceDialogue,
 }: DialogueStageProps) {
   const [visibleChars, setVisibleChars] = useState(0);
-  const [sceneError, setSceneError] = useState(false);
-  const [portraitError, setPortraitError] = useState(false);
 
-  const sceneAsset = SCENE_ASSETS[node.scene];
-  const portraitAsset = PORTRAIT_ASSETS[node.mood];
   const isComplete = visibleChars >= node.text.length;
-
-  useEffect(() => {
-    setSceneError(false);
-  }, [node.scene]);
-
-  useEffect(() => {
-    setPortraitError(false);
-  }, [node.mood]);
+  const hasContinuation =
+    choices.length === 0 && Boolean(node.next) && !node.isEnding;
 
   // Reset typewriter when node changes
   useEffect(() => {
@@ -50,27 +44,41 @@ export function DialogueStage({
     setVisibleChars(0);
   }, [node.id, node.text.length]);
 
+  // Accelerated typewriter reveal when Skip is held
   useEffect(() => {
     if (isPaused || isComplete) return;
+    const stepChars = isSkipping ? 8 : 2;
+    const stepMs = isSkipping ? 10 : 22;
     const timer = window.setTimeout(() => {
       setVisibleChars((prev) => {
-        const next = Math.min(prev + 2, node.text.length);
-        if (next % 4 === 0 && next < node.text.length) {
+        const next = Math.min(prev + stepChars, node.text.length);
+        if (!isSkipping && next % 4 === 0 && next < node.text.length) {
           soundEngine.playTypeTick();
         }
         return next;
       });
-    }, 22);
+    }, stepMs);
     return () => window.clearTimeout(timer);
-  }, [visibleChars, isPaused, isComplete, node.text.length]);
+  }, [visibleChars, isPaused, isComplete, isSkipping, node.text.length]);
+
+  // Automatically progress through linear dialogue nodes while Skip is held until a user choice is encountered
+  useEffect(() => {
+    if (isPaused || !isSkipping || !isComplete || !hasContinuation) return;
+    const timer = window.setTimeout(() => {
+      onAdvanceDialogue();
+    }, 110);
+    return () => window.clearTimeout(timer);
+  }, [isPaused, isSkipping, isComplete, hasContinuation, onAdvanceDialogue]);
 
   const handleCompleteText = () => {
     if (!isComplete) {
       setVisibleChars(node.text.length);
+    } else if (hasContinuation) {
+      onAdvanceDialogue();
     }
   };
 
-  // Space completes typewriter text if still typing; 1-3 selects choices
+  // Space/Enter completes text or advances linear dialogue; 1-3 selects choices
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (isPaused) return;
@@ -78,6 +86,9 @@ export function DialogueStage({
         if (!isComplete) {
           e.preventDefault();
           setVisibleChars(node.text.length);
+        } else if (hasContinuation) {
+          e.preventDefault();
+          onAdvanceDialogue();
         }
         return;
       }
@@ -91,58 +102,23 @@ export function DialogueStage({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isPaused, isComplete, node.text.length, choices, onSelectChoice]);
+  }, [
+    isPaused,
+    isComplete,
+    hasContinuation,
+    node.text.length,
+    choices,
+    onSelectChoice,
+    onAdvanceDialogue,
+  ]);
 
   return (
     <main className="relative h-full w-full overflow-hidden bg-[#0B1215]">
-      {/* Full-bleed atmospheric scene backdrop */}
-      {!sceneError ? (
-        <img
-          key={sceneAsset.src}
-          src={sceneAsset.src}
-          alt={sceneAsset.label}
-          referrerPolicy="no-referrer"
-          onError={() => setSceneError(true)}
-          className="absolute inset-0 h-full w-full object-cover object-center scale-[1.04] transition-opacity duration-500"
-        />
-      ) : (
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,#1a2c32_0%,#0b1215_75%)]"
-        />
-      )}
+      {/* Cross-fading atmospheric scene backdrop */}
+      <SceneBackdrop scene={node.scene} />
 
-      {/* Subtle nocturnal lighting scrim */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 bg-gradient-to-t from-[#080E11] via-[#0B1215]/30 to-[#080E11]/45"
-      />
-
-      {/* Character Portrait Stage with soft radial vignette feathering */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-16 z-15 flex justify-center sm:bottom-12 md:justify-end md:pr-[8%] lg:pr-[12%]">
-        <div className="relative h-[56vh] max-h-[620px] w-[300px] sm:h-[64vh] sm:w-[360px] lg:h-[72vh] lg:w-[420px]">
-          {!portraitError ? (
-            <img
-              key={portraitAsset.src}
-              src={portraitAsset.src}
-              alt={portraitAsset.alt}
-              referrerPolicy="no-referrer"
-              onError={() => setPortraitError(true)}
-              className="h-full w-full object-cover object-top transition-opacity duration-300"
-              style={{
-                maskImage:
-                  'radial-gradient(ellipse 68% 78% at 50% 45%, black 42%, transparent 95%)',
-                WebkitMaskImage:
-                  'radial-gradient(ellipse 68% 78% at 50% 45%, black 42%, transparent 95%)',
-              }}
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center rounded-t-lg border border-[#94A39E]/20 bg-[#121D22]">
-              <span className="font-display text-5xl text-[#E09F5A]">J</span>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Character Portrait Stage keyed dynamically by dialogue speaker */}
+      <CharacterPortrait speaker={node.speaker} mood={node.mood} />
 
       {/* Editorial Lower Dialogue & Choices Stage */}
       {!hideDialogueBox && (
@@ -159,10 +135,18 @@ export function DialogueStage({
               <span className="font-display text-xl font-semibold tracking-wide text-[#E09F5A] sm:text-2xl">
                 {node.speaker}
               </span>
-              {!isComplete && (
-                <span className="text-[11px] tracking-wide text-[#94A39E]">
-                  Click or Space to reveal
+              {isSkipping ? (
+                <span className="font-mono-num text-[11px] font-medium tracking-wide text-[#E09F5A]">
+                  {choices.length > 0 && isComplete
+                    ? 'Choice reached'
+                    : 'Skipping >>'}
                 </span>
+              ) : (
+                !isComplete && (
+                  <span className="text-[11px] tracking-wide text-[#94A39E]">
+                    Click or Space to reveal
+                  </span>
+                )
               )}
             </div>
 
@@ -180,8 +164,8 @@ export function DialogueStage({
             </p>
           </div>
 
-          {/* Choice List */}
-          {choices.length > 0 && (
+          {/* Choice List or Linear Continue Action */}
+          {choices.length > 0 ? (
             <div
               role="group"
               aria-label="Dialogue choices"
@@ -214,6 +198,30 @@ export function DialogueStage({
                 </button>
               ))}
             </div>
+          ) : (
+            hasContinuation && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onAdvanceDialogue();
+                  }}
+                  className="group flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md border border-[#94A39E]/30 bg-[#101B20]/94 px-5 py-2.5 text-sm font-medium text-[#F2ECE1] transition-all duration-150 hover:border-[#E09F5A]/80 hover:bg-[#17252B] focus-visible:outline-2 focus-visible:outline-[#E09F5A]"
+                >
+                  <span className="font-mono-num text-xs text-[#E09F5A]">
+                    [Space]
+                  </span>
+                  <span>Continue</span>
+                  <span
+                    aria-hidden="true"
+                    className="text-xs text-[#94A39E] transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-[#E09F5A]"
+                  >
+                    &rarr;
+                  </span>
+                </button>
+              </div>
+            )
           )}
         </section>
       )}

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AmbientCanvas } from './components/AmbientCanvas';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AchievementsModal } from './components/AchievementsModal';
 import { DialogueStage } from './components/DialogueStage';
 import { GameHUD } from './components/GameHUD';
 import { IntroSequence } from './components/IntroSequence';
+import { MoodParticleOverlay } from './components/MoodParticleOverlay';
 import { StudioSplash } from './components/StudioSplash';
 import {
   EndingModal,
@@ -10,22 +11,37 @@ import {
   HistoryModal,
   PauseModal,
 } from './components/Modals';
+import { SaveSlotsModal } from './components/SaveSlotsModal';
+import { SideQuestsModal } from './components/SideQuestsModal';
 import { TitleScreen } from './components/TitleScreen';
 import { soundEngine } from './game/audio';
 import {
+  ACHIEVEMENTS,
+  AchievementDefinition,
+  getAchievementById,
+} from './game/achievements';
+import {
+  advanceDialogue,
   completeIntro,
+  completeSideQuest,
   completeSplash,
   createInitialGameState,
+  deleteSlot,
   GameState,
   getAvailableChoices,
+  loadFromSlot,
   loadProgress,
   resumeSavedRun,
   returnToTitle,
   saveProgress,
+  SaveSlotIndex,
+  SaveSlotsTuple,
+  saveToSlot,
   selectChoice,
   startNewStory,
   togglePause,
 } from './game/engine';
+import { getSideQuestById, SIDE_QUESTS, SideQuestId } from './game/quests';
 import { ALL_ENDINGS, DIALOGUE_TREE, SCENE_ASSETS } from './game/storyData';
 
 export default function App() {
@@ -40,12 +56,23 @@ export default function App() {
       autostart,
       bestScore: initialPersisted.bestScore,
       unlockedEndings: initialPersisted.unlockedEndings,
+      unlockedAchievements: initialPersisted.unlockedAchievements,
     })
   );
 
   const [savedRun, setSavedRun] = useState(initialPersisted.savedRun);
+  const [saveSlots, setSaveSlots] = useState<SaveSlotsTuple>(
+    () => initialPersisted.saveSlots
+  );
   const [showHistory, setShowHistory] = useState(false);
   const [showEndingsGallery, setShowEndingsGallery] = useState(false);
+  const [showSaveSlots, setShowSaveSlots] = useState(false);
+  const [showQuests, setShowQuests] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [unlockedToast, setUnlockedToast] =
+    useState<AchievementDefinition | null>(null);
+  const prevAchievementsRef = useRef(gameState.unlockedAchievements);
+  const [isSkipping, setIsSkipping] = useState(false);
   const [muted, setMuted] = useState(false);
   const [deltaKey, setDeltaKey] = useState(0);
 
@@ -54,6 +81,10 @@ export default function App() {
   const availableChoices = useMemo(
     () => getAvailableChoices(currentNode, gameState.romanceScore),
     [currentNode, gameState.romanceScore]
+  );
+  const usedSlotsCount = useMemo(
+    () => saveSlots.filter(Boolean).length,
+    [saveSlots]
   );
 
   // Sync gameState.screen to document.body.dataset.state immediately
@@ -89,25 +120,50 @@ export default function App() {
     };
   }, []);
 
-  // Persist progress whenever relevant state changes
+  // Notify player briefly whenever a new achievement medal unlocks
   useEffect(() => {
-    saveProgress(gameState);
+    const prev = prevAchievementsRef.current;
+    const newlyUnlocked = gameState.unlockedAchievements.filter(
+      (id) => !prev.includes(id)
+    );
+    prevAchievementsRef.current = gameState.unlockedAchievements;
+    if (newlyUnlocked.length > 0) {
+      const def = getAchievementById(newlyUnlocked[0]);
+      if (def) {
+        setUnlockedToast(def);
+      }
+    }
+  }, [gameState.unlockedAchievements]);
+
+  useEffect(() => {
+    if (!unlockedToast) return;
+    const timer = window.setTimeout(() => setUnlockedToast(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [unlockedToast]);
+
+  // Persist progress & save slots whenever relevant state changes
+  useEffect(() => {
+    saveProgress(gameState, saveSlots);
     if (gameState.screen === 'playing' || gameState.screen === 'paused') {
       setSavedRun({
         romanceScore: gameState.romanceScore,
         currentNodeId: gameState.currentNodeId,
         history: gameState.history,
+        completedQuests: gameState.completedQuests,
       });
     } else if (gameState.screen === 'gameover') {
       setSavedRun(null);
     }
-  }, [gameState]);
+  }, [gameState, saveSlots]);
 
   const handleStartNew = useCallback(() => {
     soundEngine.startMusic();
     soundEngine.playStartChime();
     setShowEndingsGallery(false);
     setShowHistory(false);
+    setShowSaveSlots(false);
+    setShowQuests(false);
+    setShowAchievements(false);
     setGameState((prev) => startNewStory(prev));
   }, []);
 
@@ -116,6 +172,9 @@ export default function App() {
     soundEngine.playStartChime();
     setShowEndingsGallery(false);
     setShowHistory(false);
+    setShowSaveSlots(false);
+    setShowQuests(false);
+    setShowAchievements(false);
     setGameState((prev) => startNewStory(prev, { skipIntro: true }));
   }, []);
 
@@ -133,8 +192,47 @@ export default function App() {
     soundEngine.playStartChime();
     setShowEndingsGallery(false);
     setShowHistory(false);
+    setShowSaveSlots(false);
+    setShowQuests(false);
     setGameState((prev) => resumeSavedRun(prev, savedRun));
   }, [savedRun]);
+
+  const handleSaveSlot = useCallback(
+    (slotIndex: SaveSlotIndex) => {
+      const node = DIALOGUE_TREE[gameState.currentNodeId];
+      if (!node || node.isEnding) return;
+      setSaveSlots((prev) => saveToSlot(prev, gameState, slotIndex));
+      setGameState((prev) => ({
+        ...prev,
+        activeSlotIndex: slotIndex,
+      }));
+    },
+    [gameState]
+  );
+
+  const handleLoadSlot = useCallback(
+    (slotIndex: SaveSlotIndex) => {
+      const slot = saveSlots[slotIndex];
+      if (!slot) return;
+      soundEngine.startMusic();
+      soundEngine.playStartChime();
+      setShowEndingsGallery(false);
+      setShowHistory(false);
+      setShowSaveSlots(false);
+      setShowQuests(false);
+      setGameState((prev) => loadFromSlot(prev, slot));
+    },
+    [saveSlots]
+  );
+
+  const handleDeleteSlot = useCallback((slotIndex: SaveSlotIndex) => {
+    setSaveSlots((prev) => deleteSlot(prev, slotIndex));
+    setGameState((prev) =>
+      prev.activeSlotIndex === slotIndex
+        ? { ...prev, activeSlotIndex: null }
+        : prev
+    );
+  }, []);
 
   const handleSelectChoice = useCallback((choiceIndex: number) => {
     setGameState((prev) => {
@@ -151,8 +249,60 @@ export default function App() {
     });
   }, []);
 
+  const handleAdvanceDialogue = useCallback(() => {
+    setGameState((prev) => {
+      const next = advanceDialogue(prev);
+      if (next !== prev && next.screen === 'gameover') {
+        soundEngine.playEndingCadence((next.romanceScore ?? 0) >= 10);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleCompleteQuest = useCallback((questId: SideQuestId) => {
+    const quest = getSideQuestById(questId);
+    setGameState((prev) => {
+      const next = completeSideQuest(prev, questId);
+      if (next !== prev) {
+        setDeltaKey((k) => k + 1);
+        if (quest) {
+          soundEngine.playChoiceFeedback(quest.rewardPoints);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  // Ensure hold-to-skip never gets stuck if overlay opens, state changes, or pointer leaves window
+  useEffect(() => {
+    if (
+      gameState.screen !== 'playing' ||
+      gameState.inIntro ||
+      showHistory ||
+      showSaveSlots ||
+      showQuests
+    ) {
+      setIsSkipping(false);
+    }
+  }, [gameState.screen, gameState.inIntro, showHistory, showSaveSlots, showQuests]);
+
+  useEffect(() => {
+    const stopSkip = () => setIsSkipping(false);
+    window.addEventListener('pointerup', stopSkip);
+    window.addEventListener('pointercancel', stopSkip);
+    window.addEventListener('blur', stopSkip);
+    return () => {
+      window.removeEventListener('pointerup', stopSkip);
+      window.removeEventListener('pointercancel', stopSkip);
+      window.removeEventListener('blur', stopSkip);
+    };
+  }, []);
+
   const handleTogglePause = useCallback(() => {
     setShowHistory(false);
+    setShowSaveSlots(false);
+    setShowQuests(false);
+    setShowAchievements(false);
     setGameState((prev) => togglePause(prev));
   }, []);
 
@@ -169,10 +319,13 @@ export default function App() {
 
   const handleReturnToTitle = useCallback(() => {
     setShowHistory(false);
+    setShowSaveSlots(false);
+    setShowQuests(false);
+    setShowAchievements(false);
     setGameState((prev) => returnToTitle(prev));
   }, []);
 
-  // Global keyboard shortcuts (Title Enter/Space, Esc/P Pause, L Log, M Mute)
+  // Global keyboard shortcuts (Title Enter/Space, S Save Slots, Esc/P Pause, L Log, M Mute)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'm' || e.key === 'M') {
@@ -182,11 +335,35 @@ export default function App() {
       }
 
       if (gameState.screen === 'title') {
+        if (showAchievements) {
+          if (e.key === 'Escape' || e.key === 'a' || e.key === 'A') {
+            e.preventDefault();
+            setShowAchievements(false);
+          }
+          return;
+        }
+        if (showSaveSlots) {
+          if (e.key === 'Escape' || e.key === 's' || e.key === 'S') {
+            e.preventDefault();
+            setShowSaveSlots(false);
+          }
+          return;
+        }
         if (showEndingsGallery) {
           if (e.key === 'Escape') {
             e.preventDefault();
             setShowEndingsGallery(false);
           }
+          return;
+        }
+        if (e.key === 'a' || e.key === 'A') {
+          e.preventDefault();
+          setShowAchievements(true);
+          return;
+        }
+        if (e.key === 's' || e.key === 'S') {
+          e.preventDefault();
+          setShowSaveSlots(true);
           return;
         }
         if (e.key === 'Enter' || e.code === 'Space') {
@@ -200,10 +377,24 @@ export default function App() {
         if (gameState.inIntro) {
           return;
         }
+        if (showSaveSlots) {
+          if (e.key === 'Escape' || e.key === 's' || e.key === 'S') {
+            e.preventDefault();
+            setShowSaveSlots(false);
+          }
+          return;
+        }
         if (showHistory) {
           if (e.key === 'Escape' || e.key === 'l' || e.key === 'L') {
             e.preventDefault();
             setShowHistory(false);
+          }
+          return;
+        }
+        if (showQuests) {
+          if (e.key === 'Escape' || e.key === 'q' || e.key === 'Q') {
+            e.preventDefault();
+            setShowQuests(false);
           }
           return;
         }
@@ -213,11 +404,41 @@ export default function App() {
         } else if (e.key === 'l' || e.key === 'L') {
           e.preventDefault();
           setShowHistory(true);
+        } else if (e.key === 's' || e.key === 'S') {
+          e.preventDefault();
+          setShowSaveSlots(true);
+        } else if (e.key === 'q' || e.key === 'Q') {
+          e.preventDefault();
+          setShowQuests(true);
         }
         return;
       }
 
       if (gameState.screen === 'paused') {
+        if (showAchievements) {
+          if (e.key === 'Escape' || e.key === 'a' || e.key === 'A') {
+            e.preventDefault();
+            setShowAchievements(false);
+          }
+          return;
+        }
+        if (showSaveSlots) {
+          if (e.key === 'Escape' || e.key === 's' || e.key === 'S') {
+            e.preventDefault();
+            setShowSaveSlots(false);
+          }
+          return;
+        }
+        if (e.key === 'a' || e.key === 'A') {
+          e.preventDefault();
+          setShowAchievements(true);
+          return;
+        }
+        if (e.key === 's' || e.key === 'S') {
+          e.preventDefault();
+          setShowSaveSlots(true);
+          return;
+        }
         if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
           e.preventDefault();
           handleTogglePause();
@@ -226,6 +447,13 @@ export default function App() {
       }
 
       if (gameState.screen === 'gameover') {
+        if (showSaveSlots) {
+          if (e.key === 'Escape' || e.key === 's' || e.key === 'S') {
+            e.preventDefault();
+            setShowSaveSlots(false);
+          }
+          return;
+        }
         if (e.key === 'Enter') {
           e.preventDefault();
           handleRestartImmediate();
@@ -240,15 +468,23 @@ export default function App() {
     gameState.inIntro,
     showHistory,
     showEndingsGallery,
+    showSaveSlots,
+    showQuests,
+    showAchievements,
     handleStartNew,
     handleRestartImmediate,
     handleTogglePause,
     handleToggleMute,
   ]);
 
+  const canSaveToSlot =
+    (gameState.screen === 'playing' || gameState.screen === 'paused') &&
+    !gameState.inIntro &&
+    !currentNode.isEnding;
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#0B1215] text-[#F2ECE1]">
-      <AmbientCanvas
+      <MoodParticleOverlay
         mood={
           gameState.screen === 'splash' ||
           gameState.screen === 'title' ||
@@ -256,7 +492,7 @@ export default function App() {
             ? 'neutral'
             : currentNode.mood
         }
-        paused={gameState.screen === 'paused'}
+        paused={gameState.screen === 'paused' || showSaveSlots || showQuests}
       />
 
       {gameState.screen === 'splash' ? (
@@ -264,14 +500,18 @@ export default function App() {
       ) : gameState.screen === 'title' ? (
         <>
           <TitleScreen
+            usedSlotsCount={usedSlotsCount}
             hasSavedRun={Boolean(savedRun)}
             unlockedEndingsCount={gameState.unlockedEndings.length}
             totalEndingsCount={ALL_ENDINGS.length}
+            unlockedAchievementsCount={gameState.unlockedAchievements.length}
+            totalAchievementsCount={ACHIEVEMENTS.length}
             bestScore={gameState.bestScore}
             muted={muted}
             onStartNew={handleStartNew}
-            onContinue={handleContinue}
+            onOpenSaveSlots={() => setShowSaveSlots(true)}
             onOpenEndings={() => setShowEndingsGallery(true)}
+            onOpenAchievements={() => setShowAchievements(true)}
             onToggleMute={handleToggleMute}
           />
           {showEndingsGallery && (
@@ -292,7 +532,27 @@ export default function App() {
             lastDelta={gameState.lastDelta}
             deltaKey={deltaKey}
             muted={muted}
-            onToggleHistory={() => setShowHistory((v) => !v)}
+            isSkipping={isSkipping}
+            skipDisabled={gameState.screen !== 'playing' || gameState.inIntro}
+            completedQuestsCount={gameState.completedQuests.length}
+            totalQuestsCount={SIDE_QUESTS.length}
+            onSkipStart={() => setIsSkipping(true)}
+            onSkipEnd={() => setIsSkipping(false)}
+            onToggleQuests={() => {
+              setShowHistory(false);
+              setShowSaveSlots(false);
+              setShowQuests((v) => !v);
+            }}
+            onToggleSaveSlots={() => {
+              setShowHistory(false);
+              setShowQuests(false);
+              setShowSaveSlots((v) => !v);
+            }}
+            onToggleHistory={() => {
+              setShowSaveSlots(false);
+              setShowQuests(false);
+              setShowHistory((v) => !v);
+            }}
             onToggleMute={handleToggleMute}
             onTogglePause={handleTogglePause}
           />
@@ -300,23 +560,53 @@ export default function App() {
           <DialogueStage
             node={currentNode}
             choices={availableChoices}
-            isPaused={gameState.screen !== 'playing' || showHistory}
+            isPaused={
+              gameState.screen !== 'playing' ||
+              showHistory ||
+              showSaveSlots ||
+              showQuests
+            }
+            isSkipping={
+              isSkipping &&
+              gameState.screen === 'playing' &&
+              !showHistory &&
+              !showSaveSlots &&
+              !showQuests
+            }
             hideDialogueBox={gameState.screen === 'gameover'}
             onSelectChoice={handleSelectChoice}
+            onAdvanceDialogue={handleAdvanceDialogue}
           />
 
-          {gameState.screen === 'paused' && (
-            <PauseModal
-              onResume={handleTogglePause}
-              onRestart={handleRestartImmediate}
-              onReturnToTitle={handleReturnToTitle}
-            />
-          )}
+          {gameState.screen === 'paused' &&
+            !showSaveSlots &&
+            !showAchievements && (
+              <PauseModal
+                unlockedAchievementsCount={
+                  gameState.unlockedAchievements.length
+                }
+                totalAchievementsCount={ACHIEVEMENTS.length}
+                onResume={handleTogglePause}
+                onOpenSaveSlots={() => setShowSaveSlots(true)}
+                onOpenAchievements={() => setShowAchievements(true)}
+                onRestart={handleRestartImmediate}
+                onReturnToTitle={handleReturnToTitle}
+              />
+            )}
 
           {showHistory && gameState.screen === 'playing' && (
             <HistoryModal
               history={gameState.history}
               onClose={() => setShowHistory(false)}
+            />
+          )}
+
+          {showQuests && gameState.screen === 'playing' && (
+            <SideQuestsModal
+              currentScene={currentNode.scene}
+              completedQuests={gameState.completedQuests}
+              onCompleteQuest={handleCompleteQuest}
+              onClose={() => setShowQuests(false)}
             />
           )}
 
@@ -332,6 +622,44 @@ export default function App() {
           )}
         </>
       )}
+
+      {showSaveSlots && (
+        <SaveSlotsModal
+          saveSlots={saveSlots}
+          activeSlotIndex={gameState.activeSlotIndex}
+          canSave={canSaveToSlot}
+          hasAutosave={Boolean(savedRun) && gameState.screen === 'title'}
+          onResumeAutosave={handleContinue}
+          onSaveSlot={handleSaveSlot}
+          onLoadSlot={handleLoadSlot}
+          onDeleteSlot={handleDeleteSlot}
+          onClose={() => setShowSaveSlots(false)}
+        />
+      )}
+
+      {showAchievements && (
+        <AchievementsModal
+          unlockedAchievements={gameState.unlockedAchievements}
+          onClose={() => setShowAchievements(false)}
+        />
+      )}
+
+      {unlockedToast &&
+        gameState.screen !== 'splash' &&
+        !gameState.inIntro && (
+          <div
+            role="status"
+            data-testid="achievement-toast"
+            className="pointer-events-none fixed bottom-6 right-6 z-45 rounded-md border border-[#E09F5A]/55 bg-[#0E171B]/95 px-4 py-3 shadow-2xl"
+          >
+            <div className="text-[10px] font-semibold tracking-wider text-[#E09F5A] uppercase">
+              Medal Unlocked · {unlockedToast.medalTier}
+            </div>
+            <div className="mt-0.5 font-display text-lg font-semibold text-[#F2ECE1]">
+              {unlockedToast.title}
+            </div>
+          </div>
+        )}
     </div>
   );
 }

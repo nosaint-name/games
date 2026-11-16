@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  advanceDialogue,
   completeIntro,
+  completeSideQuest,
   completeSplash,
+  createEmptySaveSlots,
   createInitialGameState,
+  deleteSlot,
   evaluateAffinityTier,
+  evaluateRelationshipStatus,
   getAvailableChoices,
+  loadFromSlot,
   resumeSavedRun,
+  saveToSlot,
   selectChoice,
   startNewStory,
   togglePause,
@@ -158,4 +165,142 @@ test('evaluateAffinityTier maps score brackets and resumeSavedRun falls back saf
   });
   assert.equal(badResume.currentNodeId, 'start');
   assert.equal(badResume.romanceScore, 0);
+});
+
+test('saves, loads, overwrites, and deletes three independent progress slots', () => {
+  let slots = createEmptySaveSlots();
+
+  // Branch A: flirt path (+20) saved to Slot 1 (index 0)
+  let branchA = createInitialGameState({ autostart: true });
+  branchA = selectChoice(branchA, 0); // flirt (+10)
+  branchA = selectChoice(branchA, 0); // bridge_warm (+20)
+  slots = saveToSlot(slots, branchA, 0, '2026-11-16T01:40:00.000Z');
+
+  // Branch B: cold path (-10) saved to Slot 2 (index 1)
+  let branchB = createInitialGameState({ autostart: true });
+  branchB = selectChoice(branchB, 1); // cold (-5)
+  branchB = selectChoice(branchB, 2); // bridge_chill (-10)
+  slots = saveToSlot(slots, branchB, 1, '2026-11-16T01:41:00.000Z');
+
+  // Branch C: curious path (+5) saved to Slot 3 (index 2)
+  let branchC = createInitialGameState({ autostart: true });
+  branchC = selectChoice(branchC, 0); // flirt (+10)
+  branchC = selectChoice(branchC, 1); // bridge_curious (+15)
+  slots = saveToSlot(slots, branchC, 2, '2026-11-16T01:42:00.000Z');
+
+  assert.equal(slots[0]?.currentNodeId, 'bridge_warm');
+  assert.equal(slots[0]?.romanceScore, 20);
+  assert.equal(slots[1]?.currentNodeId, 'bridge_chill');
+  assert.equal(slots[1]?.romanceScore, -10);
+  assert.equal(slots[2]?.currentNodeId, 'bridge_curious');
+  assert.equal(slots[2]?.romanceScore, 15);
+
+  // Loading Slot 1 restores Branch A without touching Slots 2 & 3
+  const loadedA = loadFromSlot(createInitialGameState(), slots[0]);
+  assert.equal(loadedA.screen, 'playing');
+  assert.equal(loadedA.currentNodeId, 'bridge_warm');
+  assert.equal(loadedA.romanceScore, 20);
+  assert.equal(loadedA.activeSlotIndex, 0);
+  assert.equal(loadedA.history.length, 2);
+
+  // Deleting Slot 2 leaves Slots 1 and 3 intact
+  slots = deleteSlot(slots, 1);
+  assert.equal(slots[1], null);
+  assert.equal(slots[0]?.currentNodeId, 'bridge_warm');
+  assert.equal(slots[2]?.currentNodeId, 'bridge_curious');
+});
+
+test('advanceDialogue progresses through linear beats until the next user choice', () => {
+  let state = createInitialGameState({ autostart: true });
+  state = selectChoice(state, 0); // flirt
+  state = selectChoice(state, 2); // bridge_tease_intro (linear beat 1)
+  assert.equal(state.currentNodeId, 'bridge_tease_intro');
+  assert.equal(DIALOGUE_TREE[state.currentNodeId].choices.length, 0);
+
+  state = advanceDialogue(state); // bridge_tease_step (linear beat 2)
+  assert.equal(state.currentNodeId, 'bridge_tease_step');
+  assert.equal(DIALOGUE_TREE[state.currentNodeId].choices.length, 0);
+
+  state = advanceDialogue(state); // bridge_tease (choice node)
+  assert.equal(state.currentNodeId, 'bridge_tease');
+  assert.equal(DIALOGUE_TREE[state.currentNodeId].choices.length, 2);
+
+  // Calling advanceDialogue at a choice node is a no-op
+  const stopped = advanceDialogue(state);
+  assert.equal(stopped.currentNodeId, 'bridge_tease');
+});
+
+test('completeSideQuest awards affinity once, updates bestScore, and persists in save slots', () => {
+  let state = createInitialGameState({ autostart: true });
+  state = completeSideQuest(state, 'firefly_signal');
+  assert.equal(state.romanceScore, 5);
+  assert.equal(state.bestScore, 5);
+  assert.deepEqual(state.completedQuests, ['firefly_signal']);
+
+  // Duplicate completion is ignored
+  const duplicate = completeSideQuest(state, 'firefly_signal');
+  assert.equal(duplicate.romanceScore, 5);
+  assert.equal(duplicate.completedQuests.length, 1);
+
+  // Save to Slot 1, clear in new story, and restore from Slot 1
+  let slots = createEmptySaveSlots();
+  slots = saveToSlot(slots, state, 0, '2026-11-16T03:06:00.000Z');
+  assert.deepEqual(slots[0]?.completedQuests, ['firefly_signal']);
+
+  const fresh = startNewStory(state, { skipIntro: true });
+  assert.deepEqual(fresh.completedQuests, []);
+
+  const restored = loadFromSlot(fresh, slots[0]);
+  assert.deepEqual(restored.completedQuests, ['firefly_signal']);
+  assert.equal(restored.romanceScore, 5);
+});
+
+test('evaluateRelationshipStatus maps romanceScore into Distant, Acquaintance, Growing Closer, and Devoted', () => {
+  const distant = evaluateRelationshipStatus(-10);
+  assert.equal(distant.label, 'Distant');
+  assert.equal(distant.tone, 'distant');
+  assert.ok(distant.progressPct < 35);
+
+  const acquaintance = evaluateRelationshipStatus(0);
+  assert.equal(acquaintance.label, 'Acquaintance');
+  assert.equal(acquaintance.tone, 'acquaintance');
+
+  const closer = evaluateRelationshipStatus(15);
+  assert.equal(closer.label, 'Growing Closer');
+  assert.equal(closer.tone, 'closer');
+
+  const devoted = evaluateRelationshipStatus(35);
+  assert.equal(devoted.label, 'Devoted');
+  assert.equal(devoted.tone, 'devoted');
+  assert.ok(devoted.progressPct >= 80);
+});
+
+test('unlocks First Meeting, Completed All Quests, and Reached True Ending milestones across playthrough', () => {
+  let state = createInitialGameState({ autostart: true });
+  assert.deepEqual(state.unlockedAchievements, []);
+
+  // First choice unlocks First Meeting
+  state = selectChoice(state, 0); // +10 -> flirt
+  assert.ok(state.unlockedAchievements.includes('first_meeting'));
+
+  // Completing all 3 side quests unlocks trail_scout, all_quests, and growing_closer (>= 25)
+  state = completeSideQuest(state, 'firefly_signal'); // +5 -> 15
+  state = completeSideQuest(state, 'bridge_riddle'); // +5 -> 20
+  state = completeSideQuest(state, 'watchtower_kindling'); // +8 -> 28
+  assert.ok(state.unlockedAchievements.includes('trail_scout'));
+  assert.ok(state.unlockedAchievements.includes('all_quests'));
+  assert.ok(state.unlockedAchievements.includes('growing_closer'));
+
+  // Finishing hearthbound path unlocks Reached True Ending
+  state = selectChoice(state, 0); // bridge_warm
+  state = selectChoice(state, 0); // bridge_confide
+  state = selectChoice(state, 0); // tower_hearth
+  state = selectChoice(state, 0); // ending_hearthbound
+  assert.ok(state.unlockedAchievements.includes('true_ending'));
+
+  // Starting a new story retains earned achievements
+  const fresh = startNewStory(state, { skipIntro: true });
+  assert.ok(fresh.unlockedAchievements.includes('first_meeting'));
+  assert.ok(fresh.unlockedAchievements.includes('all_quests'));
+  assert.ok(fresh.unlockedAchievements.includes('true_ending'));
 });

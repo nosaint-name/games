@@ -3,26 +3,34 @@ import { SCENE_ASSETS } from '../game/storyData';
 import { GameLogo } from './GameLogo';
 
 interface TitleScreenProps {
+  usedSlotsCount: number;
   hasSavedRun: boolean;
   unlockedEndingsCount: number;
   totalEndingsCount: number;
+  unlockedAchievementsCount: number;
+  totalAchievementsCount: number;
   bestScore: number;
   muted: boolean;
   onStartNew: () => void;
-  onContinue: () => void;
+  onOpenSaveSlots: () => void;
   onOpenEndings: () => void;
+  onOpenAchievements: () => void;
   onToggleMute: () => void;
 }
 
 export function TitleScreen({
+  usedSlotsCount,
   hasSavedRun,
   unlockedEndingsCount,
   totalEndingsCount,
+  unlockedAchievementsCount,
+  totalAchievementsCount,
   bestScore,
   muted,
   onStartNew,
-  onContinue,
+  onOpenSaveSlots,
   onOpenEndings,
+  onOpenAchievements,
   onToggleMute,
 }: TitleScreenProps) {
   const [bgError, setBgError] = useState(false);
@@ -97,7 +105,7 @@ export function TitleScreen({
           </button>
         </div>
 
-        <section className="max-w-xl">
+        <section className="max-w-2xl">
           <div className="mb-6">
             <GameLogo variant="lockup" />
             <p className="mt-4 max-w-md text-base leading-relaxed text-[#C2CCC8]">
@@ -106,7 +114,7 @@ export function TitleScreen({
             </p>
           </div>
 
-          {/* Primary Menu Actions (<= 3 actions) */}
+          {/* Menu Actions */}
           <div className="flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <button
               type="button"
@@ -117,21 +125,22 @@ export function TitleScreen({
               }}
               className="min-h-[44px] cursor-pointer rounded-md bg-[#E09F5A] px-7 py-3 text-sm font-semibold tracking-wide text-[#0B1215] transition-transform duration-150 hover:bg-[#EBB06E] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2ECE1] whitespace-nowrap shrink-0"
             >
-              {hasSavedRun ? 'New Story' : 'Begin Story'}
+              {hasSavedRun || usedSlotsCount > 0 ? 'New Story' : 'Begin Story'}
             </button>
 
-            {hasSavedRun && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onContinue();
-                }}
-                className="min-h-[44px] cursor-pointer rounded-md border border-[#94A39E]/45 bg-[#121D22]/90 px-6 py-3 text-sm font-medium text-[#F2ECE1] transition-colors duration-150 hover:border-[#E09F5A]/70 hover:bg-[#18262C] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E09F5A] whitespace-nowrap shrink-0"
-              >
-                Continue
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenSaveSlots();
+              }}
+              className="min-h-[44px] cursor-pointer rounded-md border border-[#94A39E]/45 bg-[#121D22]/90 px-5 py-3 text-sm font-medium text-[#F2ECE1] transition-colors duration-150 hover:border-[#E09F5A]/70 hover:bg-[#18262C] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E09F5A] whitespace-nowrap shrink-0"
+            >
+              <span>Save Slots</span>{' '}
+              <span className="font-mono-num text-[#E09F5A]">
+                ({usedSlotsCount}/3)
+              </span>
+            </button>
 
             <button
               type="button"
@@ -146,13 +155,30 @@ export function TitleScreen({
                 ({unlockedEndingsCount}/{totalEndingsCount})
               </span>
             </button>
+
+            <button
+              type="button"
+              data-testid="title-achievements-button"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenAchievements();
+              }}
+              className="min-h-[44px] cursor-pointer rounded-md border border-[#94A39E]/30 bg-[#0E171B]/80 px-5 py-3 text-sm font-medium text-[#CBD4D0] transition-colors duration-150 hover:border-[#E09F5A]/70 hover:text-[#F2ECE1] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E09F5A] whitespace-nowrap shrink-0"
+            >
+              <span>Achievements</span>{' '}
+              <span className="font-mono-num text-[#E09F5A]">
+                ({unlockedAchievementsCount}/{totalAchievementsCount})
+              </span>
+            </button>
           </div>
         </section>
 
         {/* Single flat borderless control hint line */}
         <p className="text-xs tracking-wide text-[#94A39E]">
-          Enter or Space Start <span aria-hidden="true">·</span> 1–3 or Click
-          Choose <span aria-hidden="true">·</span> Esc Pause{' '}
+          Enter or Space Start <span aria-hidden="true">·</span> S Save Slots{' '}
+          <span aria-hidden="true">·</span> A Achievements{' '}
+          <span aria-hidden="true">·</span> 1–3 or Click Choose{' '}
+          <span aria-hidden="true">·</span> Esc Pause{' '}
           <span aria-hidden="true">·</span> M Mute
         </p>
       </div>

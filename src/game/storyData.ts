@@ -22,6 +22,7 @@ export interface DialogueNode {
   scene: SceneId;
   mood: CharacterMood;
   text: string;
+  next?: string;
   choices: DialogueChoice[];
   isEnding?: boolean;
   endingId?: EndingId;
@@ -135,6 +136,13 @@ export const PORTRAIT_ASSETS: Record<CharacterMood, { src: string; alt: string }
   },
 };
 
+export const CHARACTER_PORTRAITS: Record<
+  string,
+  Record<CharacterMood, { src: string; alt: string }>
+> = {
+  julian: PORTRAIT_ASSETS,
+};
+
 export const ALL_ENDINGS: { id: EndingId; title: string; hint: string }[] = [
   {
     id: 'hearthbound',
@@ -155,6 +163,50 @@ export const ALL_ENDINGS: { id: EndingId; title: string; hint: string }[] = [
     id: 'guarded_parting',
     title: 'Alone in the Pines',
     hint: 'Keep your guard raised until the village road.',
+  },
+];
+
+export interface CreditEntry {
+  role: string;
+  name: string;
+  detail?: string;
+}
+
+export const GAME_CREDITS: CreditEntry[] = [
+  {
+    role: 'Presented By',
+    name: 'Party Cow Studios',
+    detail: 'Original Concept & Production',
+  },
+  {
+    role: 'Game Direction & Design',
+    name: 'Party Cow Studios Interactive',
+    detail: 'Branching Narrative & Affinity Systems',
+  },
+  {
+    role: 'Story & Dialogue',
+    name: 'Blackpine Hollow Writing Room',
+    detail: '4 Chapters · 4 Distinct Endings',
+  },
+  {
+    role: 'Featured Character',
+    name: 'Julian',
+    detail: 'Keeper of the Midnight Watch',
+  },
+  {
+    role: 'Environment & Portrait Art',
+    name: 'Nocturnal Atelier',
+    detail: 'Blackpine Clearing · Stone Bridge · Ridge Watchtower · Hearth',
+  },
+  {
+    role: 'Original Score & Audio',
+    name: 'Midnight Celesta & Pad Ensemble',
+    detail: 'Mood-Adaptive Web Audio Soundtrack',
+  },
+  {
+    role: 'Engineering & UI',
+    name: 'After Midnight Build Team',
+    detail: 'Typewriter Stage · 3-Slot Save System · Gallery',
   },
 ];
 
@@ -193,7 +245,7 @@ export const DIALOGUE_TREE: Record<string, DialogueNode> = {
       },
       {
         label: 'Maybe I already did. Goodnight, Julian.',
-        next: 'bridge_tease',
+        next: 'bridge_tease_intro',
         points: 0,
         tone: 'guarded',
       },
@@ -215,7 +267,7 @@ export const DIALOGUE_TREE: Record<string, DialogueNode> = {
       },
       {
         label: 'I know these trails better than you think.',
-        next: 'bridge_tense',
+        next: 'bridge_tense_intro',
         points: 0,
         tone: 'curious',
       },
@@ -265,17 +317,37 @@ export const DIALOGUE_TREE: Record<string, DialogueNode> = {
       },
       {
         label: 'Press him about the lights near the old watchtower.',
-        next: 'watch_secret',
+        next: 'watch_secret_intro',
         points: 5,
         tone: 'curious',
       },
       {
         label: 'Deflect—say you only wanted quiet air.',
-        next: 'bridge_tense',
+        next: 'bridge_tense_intro',
         points: -5,
         tone: 'guarded',
       },
     ],
+  },
+  bridge_tease_intro: {
+    id: 'bridge_tease_intro',
+    speaker: 'Julian',
+    chapter: 'II · The Stone Bridge',
+    scene: 'bridge',
+    mood: 'neutral',
+    text: 'Wait—not so fast. The mist thickens right past the creek bend.',
+    next: 'bridge_tease_step',
+    choices: [],
+  },
+  bridge_tease_step: {
+    id: 'bridge_tease_step',
+    speaker: 'Julian',
+    chapter: 'II · The Stone Bridge',
+    scene: 'bridge',
+    mood: 'warm',
+    text: 'He catches up beside the mossy railing, raising his brass lantern so the river stones gleam.',
+    next: 'bridge_tease',
+    choices: [],
   },
   bridge_tease: {
     id: 'bridge_tease',
@@ -293,11 +365,21 @@ export const DIALOGUE_TREE: Record<string, DialogueNode> = {
       },
       {
         label: 'Agree, if he stops acting so cryptic.',
-        next: 'watch_secret',
+        next: 'watch_secret_intro',
         points: 5,
         tone: 'curious',
       },
     ],
+  },
+  bridge_tense_intro: {
+    id: 'bridge_tense_intro',
+    speaker: 'Julian',
+    chapter: 'II · The Stone Bridge',
+    scene: 'bridge',
+    mood: 'guarded',
+    text: 'The pine canopy closes overhead, leaving only the rush of black creek water ahead.',
+    next: 'bridge_tense',
+    choices: [],
   },
   bridge_tense: {
     id: 'bridge_tense',
@@ -309,7 +391,7 @@ export const DIALOGUE_TREE: Record<string, DialogueNode> = {
     choices: [
       {
         label: 'Fall into step beside him without arguing.',
-        next: 'watch_secret',
+        next: 'watch_secret_intro',
         points: 5,
         tone: 'warm',
       },
@@ -364,6 +446,16 @@ export const DIALOGUE_TREE: Record<string, DialogueNode> = {
         tone: 'curious',
       },
     ],
+  },
+  watch_secret_intro: {
+    id: 'watch_secret_intro',
+    speaker: 'Julian',
+    chapter: 'III · The Watchtower',
+    scene: 'watchtower',
+    mood: 'neutral',
+    text: 'Julian lowers his lantern near the stone steps, eyeing a faint ribbon of woodsmoke drifting above the ridge.',
+    next: 'watch_secret',
+    choices: [],
   },
   watch_secret: {
     id: 'watch_secret',
